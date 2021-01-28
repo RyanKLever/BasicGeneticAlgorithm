@@ -1,0 +1,333 @@
+<html>
+  <style>
+  html, body {
+    margin: 0;
+    font-family: sans-serif;
+  }
+  </style>
+  <body>
+    <script>
+'use strict';
+{
+
+const STARTING_MUTATION_SCALE = 50
+const MUTATION_SCALE_FACTOR = 0.985
+const END_THRESHOLD = 0.2
+
+window.config = {
+  popSize: 600,
+  ratioKilledPerGen: 0.166,
+  ratioMutatedPerGen: 0.333,
+  mirrorIntoRange: true,
+  normalizeFitness: true,
+  cutLowest: true, // Only works if normalizeFitness is true
+  slowMutation: true,
+}
+window.userConfig = {...config}
+const numKilledPerGen = () => Math.round(config.popSize * config.ratioKilledPerGen)
+const numMutatedPerGen = () => Math.round(config.popSize * config.ratioMutatedPerGen)
+const whenNormalizingIgnoreLowest = () => numMutatedPerGen() + numKilledPerGen()
+
+
+class Chromosome {
+  constructor(w, x, y, z) {
+    this.id = Math.random();
+    this.w = w
+    this.x = x
+    this.y = y
+    this.z = z
+  }
+};
+
+const genUniform = () => Math.random()
+const genGene = () => Math.random() * 75
+
+const mirrorIntoRange = x => {
+  while(x < 0 || x > 75){
+    if(x < 0)
+      x *= -1
+    if(x > 75)
+      x = 150 - x
+  }
+  return x
+}
+const modulus = x => x - 75*Math.floor(x/75)
+
+function mutateGene(gene, multiplier){
+  if (!config.slowMutation)
+    multiplier = 1;
+  let delta = multiplier * (0.5 - genUniform());
+  return config.mirrorIntoRange ? mirrorIntoRange(gene + delta) : modulus(gene + delta)
+}
+
+function fitness1(c){
+  const omega = Math.PI * 2;
+  const sigma = 150;
+  return Math.sin(omega * (c.w + c.y)) ** 2 *
+    Math.sin(omega * (c.x + c.z)) ** 2 *
+    Math.E ** (-(c.w + c.x + c.y + c.z) / sigma);
+}
+
+function fitness2(c){
+  return 1 - fitness1(c);
+}
+
+function findBestChromosome(population, fitness){
+  let best = population[0];
+  for(let c of population)
+    if (fitness(best) < fitness(c))
+      best = c;
+  return best
+}
+
+function sumTotalFitness(chromosomes, fitness){
+  let total = 0.0;
+  for(let c of chromosomes)
+    total += fitness(c)
+  return total
+}
+
+class Selector {
+  constructor(population, normalizedFitness){
+    this.filteredPopulation = population.filter(
+        x => normalizedFitness(x)!==0
+    ) // Because we normalize the population, a lot of them end up equaling 0
+    this.normalizedFitness = normalizedFitness
+    this.totalFitness = sumTotalFitness(population, normalizedFitness)
+  }
+  selectOne() {
+    let n = genUniform();
+    for(let c of this.filteredPopulation){
+      n -= this.normalizedFitness(c) / this.totalFitness
+      if (n <= 0)
+        return c
+    }
+
+    throw new Error("unreachable");
+  }
+};
+
+function normalizeFitnessFunc(population, fitness){
+  let fitnesses = population.map(c => fitness(c)).sort((a,b) => a-b)
+  let highest = fitnesses[fitnesses.length-1]
+  let lowest = fitnesses[config.cutLowest ? whenNormalizingIgnoreLowest() : 0]
+  // We exclude some of the most lowest
+  if (highest === lowest)
+    return c => 1
+
+  return c => {
+    if (!config.normalizeFitness)
+      return fitness(c)
+    let score = (fitness(c) - lowest) / (highest - lowest);
+    return Math.max(0, score);
+  }
+}
+
+function selectSurvivors(population, normalizedFitness) {
+  let selector = new Selector(population, normalizedFitness)
+
+  let result = []
+  for (let i = 0; i < config.popSize-numKilledPerGen(); ++i)
+    result.push( selector.selectOne() )
+  return result
+}
+
+function repopulateByCrossover(population, normalizedFitness){
+  let selector = new Selector(population, normalizedFitness)
+
+  let result = population.slice()
+  while (result.length < config.popSize) {
+    let mate1 = selector.selectOne();
+    let mate2 = selector.selectOne();
+    for (let i = 0; i < 2; ++i) {
+      let w = genUniform() > 0.5 ? mate1.w : mate2.w;
+      let x = genUniform() > 0.5 ? mate1.x : mate2.x;
+      let y = genUniform() > 0.5 ? mate1.y : mate2.y;
+      let z = genUniform() > 0.5 ? mate1.z : mate2.z;
+      result.push( new Chromosome(w, x, y, z, true) );
+    }
+  }
+
+  return result
+}
+
+function mutatePopulation(population, mutatationScale){
+  let result = population.slice()
+  let toMutate = []
+
+  for(let i = 0; i < numMutatedPerGen(); ++i){
+    let randIndex = Math.floor(result.length * genUniform());
+    let element = result[randIndex];
+    result.splice(randIndex, 1)
+    toMutate.push(element);
+  }
+
+  for(let c of toMutate){
+    result.push(
+      new Chromosome(
+        mutateGene(c.w, mutatationScale), mutateGene(c.x, mutatationScale),
+        mutateGene(c.y, mutatationScale), mutateGene(c.z, mutatationScale),
+        true
+      )
+    );
+  }
+
+  return result;
+}
+
+function nextGeneration(population, fitness, mutationScale){
+  let normalizedFitness = normalizeFitnessFunc(population, fitness)
+
+  population = selectSurvivors(population, normalizedFitness)
+  population = repopulateByCrossover(population, normalizedFitness)
+  return mutatePopulation(population, mutationScale)
+}
+
+function generateRandomPopulation(){
+  let population = []
+  for(let i=0; i<config.popSize; ++i)
+    population.push(
+      new Chromosome( genGene(), genGene(), genGene(), genGene(), false )
+    );
+  return population;
+}
+
+let runResult
+function* run(population, fitness) {
+  let mutationScale = STARTING_MUTATION_SCALE;
+  let top
+  let topFitness = -Infinity
+  while (true) {
+    let maybeBest = findBestChromosome(population, fitness);
+    if (fitness(maybeBest) > topFitness) {
+      top = maybeBest
+      topFitness = fitness(maybeBest)
+    }
+
+    mutationScale *= MUTATION_SCALE_FACTOR
+    if (mutationScale <= END_THRESHOLD) {
+      runResult = top
+      return top;
+    }
+
+    renderUpdate(mutationScale, population)
+    yield null
+
+    population = nextGeneration(population, fitness, mutationScale);
+  }
+}
+
+function* main() {
+  let gen = run(generateRandomPopulation(), fitness1)
+  for (let x of gen) yield
+  let top = runResult
+  showResult(top)
+}
+
+let interval
+window.start = () => {
+  let gen = main()
+  clearInterval(interval)
+  interval = setInterval(() => gen.next(), 60)
+}
+
+setTimeout( () => {
+  initialRender()
+  window.start()
+})
+
+const SIZE = 1800
+const OTHER_SIZE = 150
+const SCALE = SIZE/OTHER_SIZE
+let $el
+let $result
+function initialRender() {
+  let $box = document.createElement('div')
+  $box.style.width = SIZE+'px'
+  $box.style.height = SIZE+'px'
+  $box.style.border = '1px solid red'
+  document.body.appendChild($box)
+
+  $el = document.createElement('div')
+  document.body.appendChild($el)
+
+  $result = document.getElementById('result')
+}
+
+function renderUpdate(mutationScale, population) {
+  $el.innerHTML = ''
+  $result.innerHTML = ''
+
+  for (let c of population) {
+    let $x = document.createElement('div')
+    $x.style.position = 'absolute'
+    $x.style.top = (SCALE * (c.w + c.y) - 2) + 'px'
+    $x.style.left = (SCALE * (c.x +c.z) - 2) + 'px'
+    $x.style.background='rgb(0,' + (fitness1(c) * 255) + ',255)'
+    $x.style.borderRadius='50%'
+    $x.style.width='4px'
+    $x.style.height='4px'
+    $el.appendChild($x)
+  }
+}
+
+function showResult(top) {
+  $el.innerHTML = ''
+  let text = 'Fitness=' + fitness1(top) + " w+y=" + (top.w + top.y) + " x+z=" +
+    (top.x+top.z);
+  $result.innerText = text
+}
+
+}
+    </script>
+    <div style="position:fixed; bottom:10px; left:10px">
+      <button onClick="start()">Restart</button>
+      <span style="font-family:monospace" id="result"></span>
+    </div>
+    <div class="config">
+      <p>Slow mutatations over time</p>
+      <select oninput="userConfig.slowMutation = Boolean(event.target.value)">
+        <option value="true">Yes</option>
+        <option value="">No</option>
+      </select>
+      <p>Fitness Normalization Behavior</p>
+      <select oninput="userConfig.normalizeFitness = Number(event.target.value)>0, userConfig.cutLowest = Number(event.target.value)>1">
+        <option value="2">Normalize and ignore weakest</option>
+        <option value="1">Normalize</option>
+        <option value="0">No normalization</option>
+      </select>
+      <p>Out of bounds behavior</p>
+      <select oninput="userConfig.mirrorIntoRange = Boolean(event.target.value)">
+        <option value="true">Mirror</option>
+        <option value="">Modulus</option>
+      </select>
+      <p>Population Size</p>
+      <input type="number" min="0" max="5000" id="input1"
+      onInput="userConfig.popSize=event.target.value">
+      <script> document.getElementById('input1').value = config.popSize </script>
+      <p>Ratio created by crossover per gen</p>
+      <input type="number" min="0" max="1" step="0.01" id="input2"
+      onInput="userConfig.ratioKilledPerGen=event.target.value">
+      <script> document.getElementById('input2').value = config.ratioKilledPerGen </script>
+      <p>Ratio mutated per generation</p>
+      <input type="number" min="0" max="1" step="0.01" id="input3"
+      onInput="userConfig.ratioMutatedPerGen=event.target.value">
+      <script> document.getElementById('input3').value = config.ratioMutatedPerGen </script>
+      <br/>
+      <br/>
+      <button onclick="window.config={...userConfig}, start()">Apply Settings</button>
+    </div>
+    <style>
+      .config {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        text-align: right;
+      }
+      .config p {
+        margin-bottom: 5px;
+      }
+    </style>
+  </body>
+
+</html>
