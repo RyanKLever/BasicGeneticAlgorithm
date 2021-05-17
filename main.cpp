@@ -8,7 +8,7 @@
 #include <chrono>
 #include <random>
 #include <functional>
-using namespace std;
+using namespace std;   
 
 const size_t P = 600;
 const double R = 0.167;
