@@ -9,6 +9,7 @@
 #include <random>
 #include <functional>
 
+
 using namespace std;   
 
 const size_t P = 600;
